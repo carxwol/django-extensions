@@ -6,6 +6,8 @@ import re
 import six
 import string
 import warnings
+import uuid
+from binascii import crc32
 
 try:
     import uuid
@@ -519,3 +521,42 @@ class ShortUUIDField(UUIDField):
             return shortuuid.uuid(name=self.namespace)
         else:
             raise UUIDVersionError("UUID version %s is not valid." % self.version)
+
+class CRC32Field(CharField):
+    ''' CRC32Field
+
+    By default uses binascii.crc32 witn randomly generated UUID
+    '''
+    def __init__(self, verbose_name=None, name=None, auto=True, *args, **kwargs):
+        if not HAS_UUID:
+            raise ImproperlyConfigured("'uuid' module is required for UUIDField. (Do you have Python 2.5 or higher installed?)")
+
+        kwargs.setdefault('max_length', 8)
+        if auto:
+            self.empty_strings_allowed = False
+            kwargs['blank'] = True
+            kwargs.setdefault('editable', False)
+
+        self.auto = auto
+
+        super(CRC32Field, self).__init__(verbose_name=verbose_name, *args, **kwargs)
+
+    def create_crc32(self):
+        return '{0:08x}'.format(crc32(bytes(uuid.uuid1().hex, 'utf8')) & 0xffffffff)
+
+    def pre_save(self, model_instance, add):
+        value = super(CRC32Field, self).pre_save(model_instance, add)
+        if self.auto and add and value is None:
+            value = self.create_crc32()
+            setattr(model_instance, self.attname, value)
+            return value
+        elif self.auto and not value:
+            value = force_unicode(self.create_crc32())
+            setattr(model_instance, self.attname, value)
+        return value
+
+    def formfield(self, **kwargs):
+        if self.auto:
+            return None
+        return super(CRC32Field, self).formfield(**kwargs)
+
